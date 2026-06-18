@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Pop the Balloon 🎈</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Splash Screen -->
+  <div id="splash" class="screen active">
+    <div class="splash-content">
+      <div class="balloon-hero">🎈</div>
+      <h1>Pop the Balloon</h1>
+      <p class="subtitle">Hold your balloon. Find your match. Don't get popped.</p>
+      <div class="mode-select">
+        <button class="mode-btn active" data-mode="chill">🔵 Chill</button>
+        <button class="mode-btn" data-mode="rapid">🔴 Rapid Fire</button>
+        <button class="mode-btn" data-mode="blind">🟡 Blind</button>
+      </div>
+      <button id="playBtn" class="btn-primary">Join Game</button>
+      <p id="splashStatus" class="status-text">Connecting...</p>
+    </div>
+  </div>
+
+  <!-- Lobby Screen -->
+  <div id="lobby" class="screen">
+    <div class="lobby-content">
+      <h2>🎈 Waiting for Players</h2>
+      <div id="balloonRack" class="balloon-rack"></div>
+      <p class="player-count">Players: <span id="lobbyCount">1</span>/12</p>
+      <button id="startBtn" class="btn-primary hidden">Start Game</button>
+      <p id="lobbyStatus" class="status-text">Share the link to invite friends!</p>
+    </div>
+  </div>
+
+  <!-- Game Screen -->
+  <div id="gameScreen" class="screen">
+    <!-- Your Balloon (always visible) -->
+    <div id="myBalloon" class="my-balloon">
+      <div class="balloon" id="myBalloonShape">
+        <div class="balloon-body"></div>
+        <div class="balloon-string"></div>
+        <span class="balloon-name" id="myBalloonName"></span>
+      </div>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud">
+      <div class="hud-left">
+        <span class="hud-label">Round</span>
+        <span id="roundDisplay">1/5</span>
+      </div>
+      <div class="hud-center">
+        <span id="promptText" class="prompt-text"></span>
+      </div>
+      <div class="hud-right">
+        <span id="timerDisplay" class="timer">30s</span>
+      </div>
+    </div>
+
+    <!-- Answer Display Area -->
+    <div id="answerArea" class="answer-area">
+      <div id="answerCard" class="answer-card hidden">
+        <p id="answerText" class="answer-text"></p>
+        <div id="answerReactions" class="answer-reactions hidden">
+          <button id="keepBtn" class="vote-btn keep">💚 Keep</button>
+          <button id="popBtn" class="vote-btn pop">🔴 Pop</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Players Status -->
+    <div id="playersBar" class="players-bar"></div>
+
+    <!-- Submit Answer -->
+    <div id="answerInput" class="answer-input-area hidden">
+      <input type="text" id="answerField" placeholder="Type your answer..." maxlength="200">
+      <button id="submitAnswer" class="btn-submit">Send</button>
+    </div>
+  </div>
+
+  <!-- Results Screen -->
+  <div id="results" class="screen">
+    <div class="results-content">
+      <h2>🎉 Results</h2>
+      <div id="matchedBalloons" class="matched-balloons"></div>
+      <p id="resultText" class="result-text"></p>
+      <button id="playAgainBtn" class="btn-primary">Play Again</button>
+    </div>
+  </div>
+
+  <!-- Pop Overlay -->
+  <div id="popOverlay" class="pop-overlay hidden">
+    <div class="pop-explosion">POP!</div>
+  </div>
+
+  <!-- Confetti Canvas -->
+  <canvas id="confettiCanvas" class="confetti-canvas"></canvas>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
