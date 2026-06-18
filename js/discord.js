@@ -2,7 +2,7 @@
  * Pop the Balloon — Discord Embedded App SDK
  */
 
-const CLIENT_ID = "1517048814513422467"; // Reuse Pop Party's Discord app
+const CLIENT_ID = "1517307308823150683";
 
 export let isDiscord = false;
 export let channelId = "lobby";
