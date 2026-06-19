@@ -323,45 +323,33 @@ function showAnswerCard(state) {
 
 // ── Voting ───────────────────────────────────────────────────────────────────
 function castVote(vote) {
-  const idx = firebaseState ? firebaseState.revealIndex : '?';
-  const ans = firebaseState && firebaseState.shuffledAnswers ? firebaseState.shuffledAnswers.map(a=>a.text.substring(0,10)).join(',') : 'none';
-  console.log("[Vote] phase=" + (firebaseState?firebaseState.phase:'?') + " reveal=" + idx + " answers=[" + ans + "]");
-  
-  if (!firebaseState || firebaseState.phase !== "prompt") {
-    console.log("[Vote] SKIP: no firebaseState or not in prompt phase");
-    return;
-  }
-
-  const revealIdx = firebaseState.revealIndex;
-  const answers = firebaseState.shuffledAnswers || [];
-  if (revealIdx < 0 || revealIdx >= answers.length) {
-    console.log("[Vote] SKIP: invalid revealIdx=" + revealIdx);
-    return;
-  }
-
-  const answer = answers[revealIdx];
-  const isMyAnswer = answer.playerId === playerId;
-  console.log("[Vote] answer.owner=" + answer.playerId + " myId=" + playerId + " isMy=" + isMyAnswer);
-  if (isMyAnswer) return;
-
-  // Check if already voted
-  if (firebaseState.votedPlayers && firebaseState.votedPlayers[playerId]) {
-    console.log("[Vote] SKIP: already voted");
-    return;
-  }
-
-  // Write vote directly to Firebase
-  submitVote(firebaseState.currentPrompt, answer.playerId, playerId, vote);
-  console.log("[Vote] Voted " + vote + " on " + answer.playerId + " (" + answer.text.substring(0, 20) + ")");
-
-  if (vote === "pop") {
-    els.popBtn.classList.add("voted");
-    els.keepBtn.classList.add("voted");
-    showPopAnimation(answer.playerId);
-  } else {
-    els.keepBtn.classList.add("voted");
-    els.popBtn.classList.add("voted");
-  }
+  // Read fresh state from Firebase to avoid stale revealIndex
+  if (!db || !dbMod) return;
+  const stateRef = dbMod.ref(db, roomPath("state"));
+  dbMod.get(stateRef).then((snap) => {
+    const freshState = snap.val();
+    if (!freshState || freshState.phase !== "prompt") return;
+    
+    const revealIdx = freshState.revealIndex;
+    const answers = freshState.shuffledAnswers || [];
+    if (revealIdx < 0 || revealIdx >= answers.length) return;
+    
+    const answer = answers[revealIdx];
+    if (answer.playerId === playerId) return; // Can't vote on own answer
+    
+    console.log("[Vote] Voting " + vote + " on " + answer.playerId + " (reveal=" + revealIdx + ", " + answer.text.substring(0, 15) + ")");
+    
+    submitVote(freshState.currentPrompt, answer.playerId, playerId, vote);
+    
+    if (vote === "pop") {
+      els.popBtn.classList.add("voted");
+      els.keepBtn.classList.add("voted");
+      showPopAnimation(answer.playerId);
+    } else {
+      els.keepBtn.classList.add("voted");
+      els.popBtn.classList.add("voted");
+    }
+  }).catch(() => {});
 }
 
 function advanceReveal(state) {
