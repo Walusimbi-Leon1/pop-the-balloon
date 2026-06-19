@@ -114,11 +114,20 @@ function listenForGameState() {
       console.log("[Game] showScreen done, gamePhase:", gamePhase);
       showPromptFromState(state);
     } else if (state.phase === "prompt" && gamePhase === "game") {
-      // New prompt from host
+      // Already in game, but might need to update prompt display or re-listen
+      console.log("[Game] Already in game, updating prompt display");
+      gamePrompts = state.prompts || gamePrompts;
       currentPromptIndex = state.currentPrompt || 0;
       currentAnswerIndex = 0;
       myVote = null;
-      showPromptFromState(state);
+      const prompt = gamePrompts[currentPromptIndex];
+      els.promptText.textContent = prompt || "";
+      els.roundDisplay.textContent = `${currentPromptIndex + 1}/${gamePrompts.length}`;
+      els.answerInput.classList.remove("hidden");
+      els.answerCard.classList.add("hidden");
+      els.answerReactions.classList.add("hidden");
+      updatePlayersBar();
+      listenForAnswers(currentPromptIndex);
     } else if (state.phase === "results" && gamePhase !== "results") {
       showResults();
     } else if (state.phase === "lobby" && gamePhase !== "lobby") {
