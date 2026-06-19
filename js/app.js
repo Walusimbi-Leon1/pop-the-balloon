@@ -109,30 +109,39 @@ function handleStateChange(prev, state) {
     showScreen("lobby");
     updateLobby();
   } else if (state.phase === "prompt") {
-    if (prevPhase !== "prompt") {
-      // Entering prompt phase — show game screen
-      gamePrompts = state.prompts || PROMPTS.slice(0, 5);
+    gamePrompts = state.prompts || gamePrompts;
+    
+    // Only update prompt display if prompt index changed or first time
+    if (!prev || state.currentPrompt !== prev.currentPrompt) {
       showScreen("game");
+      const idx = state.currentPrompt || 0;
+      if (idx < gamePrompts.length) {
+        els.promptText.textContent = gamePrompts[idx];
+        els.roundDisplay.textContent = `${idx + 1}/${gamePrompts.length}`;
+        els.answerInput.classList.remove("hidden");
+        els.answerCard.classList.add("hidden");
+        els.answerReactions.classList.add("hidden");
+        els.answerField.value = "";
+        updatePlayersBar();
+        listenForAnswers(idx);
+      }
     }
-    // Update prompt display
-    showPromptFromState(state);
-  } else if (state.phase === "results") {
-    if (prevPhase !== "results") {
-      showResults();
-    }
+  } else if (state.phase === "results" && prevPhase !== "results") {
+    showResults();
   }
 
   // Reveal index changed — show next answer card
-  if (state.phase === "prompt" && state.revealIndex !== undefined) {
-    if (!prev || state.revealIndex !== prev.revealIndex) {
+  if (state.phase === "prompt" && state.revealIndex !== undefined && state.revealIndex >= 0) {
+    if (!prev || state.revealIndex !== prev.revealIndex || state.currentPrompt !== prev?.currentPrompt) {
       showAnswerCard(state);
     }
   }
 
   // Voting complete for current reveal — host advances
   if (state.phase === "prompt" && state.revealIndex !== undefined && isHost()) {
-    const votesForCurrent = getVotesForReveal(state, state.revealIndex);
-    if (votesForCurrent >= getVotablePlayerCount(state) && !state.advancing) {
+    const votesForCurrent = state.votedPlayers ? Object.keys(state.votedPlayers).length : 0;
+    const totalVotable = Math.max(0, players.length - 1);
+    if (votesForCurrent >= totalVotable && !state.advancing) {
       advanceReveal(state);
     }
   }
