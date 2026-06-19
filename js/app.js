@@ -138,10 +138,12 @@ function handleStateChange(prev, state) {
   }
 
   // Voting complete for current reveal — host advances
-  if (state.phase === "prompt" && state.revealIndex !== undefined && isHost()) {
+  if (state.phase === "prompt" && state.revealIndex !== undefined && state.revealIndex >= 0 && isHost()) {
     const votesForCurrent = state.votedPlayers ? Object.keys(state.votedPlayers).length : 0;
     const totalVotable = Math.max(0, players.length - 1);
+    console.log("[Host] Votes: " + votesForCurrent + "/" + totalVotable + " advancing:" + state.advancing);
     if (votesForCurrent >= totalVotable && !state.advancing) {
+      console.log("[Host] All votes in! Advancing...");
       advanceReveal(state);
     }
   }
@@ -341,17 +343,22 @@ function castVote(vote) {
 }
 
 function advanceReveal(state) {
+  if (!isHost()) return;
+  
+  // Mark as advancing to prevent duplicate advances
+  const advancingState = { ...state, advancing: true };
+  setGameState(advancingState);
+  
   const nextIdx = (state.revealIndex || 0) + 1;
   const answers = state.shuffledAnswers || [];
 
   if (nextIdx >= answers.length) {
-    // All answers revealed for this prompt
     const nextPrompt = (state.currentPrompt || 0) + 1;
     if (nextPrompt >= gamePrompts.length) {
-      setGameState({ ...state, phase: "results", advancing: false });
+      setGameState({ ...advancingState, phase: "results", advancing: false });
     } else {
       setGameState({
-        ...state,
+        ...advancingState,
         currentPrompt: nextPrompt,
         revealIndex: -1,
         votedPlayers: {},
@@ -360,7 +367,7 @@ function advanceReveal(state) {
     }
   } else {
     setGameState({
-      ...state,
+      ...advancingState,
       revealIndex: nextIdx,
       votedPlayers: {},
       advancing: false,
