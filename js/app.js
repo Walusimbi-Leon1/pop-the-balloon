@@ -263,12 +263,13 @@ function listenForVotes(state) {
   if (revealIdx < 0 || revealIdx >= answers.length) return;
   
   const answer = answers[revealIdx];
+  console.log("[Host] Listening for votes on answer: " + answer.playerId + " (" + answer.text.substring(0, 20) + ")");
   votesUnsub = onVotesUpdate(state.currentPrompt, answer.playerId, (votes) => {
     const voteCount = Object.keys(votes).length;
     const totalVotable = Math.max(0, players.length - 1);
-    console.log("[Host] Votes: " + voteCount + "/" + totalVotable);
+    console.log("[Host] Votes: " + voteCount + "/" + totalVotable + " votes: " + JSON.stringify(votes));
     
-    if (voteCount >= totalVotable && !state.advancing) {
+    if (voteCount >= totalVotable) {
       console.log("[Host] All votes in! Advancing...");
       advanceReveal(state);
     }
@@ -334,8 +335,9 @@ function castVote(vote) {
   // Check if already voted
   if (firebaseState.votedPlayers && firebaseState.votedPlayers[playerId]) return;
 
-  // Write vote directly to Firebase (atomic update, no race condition)
+  // Write vote directly to Firebase using the answer's actual player ID
   submitVote(firebaseState.currentPrompt, answer.playerId, playerId, vote);
+  console.log("[Vote] Voted " + vote + " on " + answer.playerId + " (text: " + answer.text.substring(0, 20) + ")");
 
   if (vote === "pop") {
     els.popBtn.classList.add("voted");
