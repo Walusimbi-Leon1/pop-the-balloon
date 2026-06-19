@@ -323,6 +323,10 @@ function showAnswerCard(state) {
 
 // ── Voting ───────────────────────────────────────────────────────────────────
 function castVote(vote) {
+  const idx = firebaseState ? firebaseState.revealIndex : '?';
+  const ans = firebaseState && firebaseState.shuffledAnswers ? firebaseState.shuffledAnswers.map(a=>a.text.substring(0,10)).join(',') : 'none';
+  console.log("[Vote] phase=" + (firebaseState?firebaseState.phase:'?') + " reveal=" + idx + " answers=[" + ans + "]");
+  
   if (!firebaseState || firebaseState.phase !== "prompt") {
     console.log("[Vote] SKIP: no firebaseState or not in prompt phase");
     return;
