@@ -103,7 +103,6 @@ function listenForGameState() {
 
 function handleStateChange(prev, state) {
   const prevPhase = prev ? prev.phase : null;
-  console.log("[Sync] State:", state.phase, "prompt:", state.currentPrompt, "reveal:", state.revealIndex, "answers:", (state.shuffledAnswers||[]).map(a=>a.text.substring(0,10)).join(","));
 
   // Phase transitions
   if (state.phase === "lobby" && prevPhase !== "lobby") {
@@ -239,12 +238,9 @@ function listenForAnswers(promptIndex) {
   if (answersUnsub) answersUnsub();
   answersUnsub = onAnswersUpdate(promptIndex, (answers) => {
     const totalPlayers = players.length;
-    console.log(`[Answers] ${answers.length}/${totalPlayers} for prompt ${promptIndex}`);
 
     // All answers in and host hasn't started reveal yet → start reveal
     if (answers.length >= totalPlayers && isHost() && firebaseState && firebaseState.revealIndex === -1) {
-      console.log("[Host] All answers in! Starting reveal...");
-      // Shuffle answers for anonymous reveal and store them
       const shuffled = shuffleArray([...answers]);
       setGameState({
         ...firebaseState,
@@ -264,14 +260,11 @@ function listenForVotes(state) {
   if (revealIdx < 0 || revealIdx >= answers.length) return;
   
   const answer = answers[revealIdx];
-  console.log("[Host] Listening for votes on answer: " + answer.playerId + " (" + answer.text.substring(0, 20) + ")");
   votesUnsub = onVotesUpdate(state.currentPrompt, answer.playerId, (votes) => {
     const voteCount = Object.keys(votes).length;
     const totalVotable = Math.max(0, players.length - 1);
-    console.log("[Host] Votes: " + voteCount + "/" + totalVotable + " votes: " + JSON.stringify(votes));
     
     if (voteCount >= totalVotable) {
-      console.log("[Host] All votes in! Advancing...");
       advanceReveal(state);
     }
   });
@@ -336,8 +329,6 @@ function castVote(vote) {
     
     const answer = answers[revealIdx];
     if (answer.playerId === playerId) return; // Can't vote on own answer
-    
-    console.log("[Vote] Voting " + vote + " on " + answer.playerId + " (reveal=" + revealIdx + ", " + answer.text.substring(0, 15) + ")");
     
     submitVote(freshState.currentPrompt, answer.playerId, playerId, vote);
     
