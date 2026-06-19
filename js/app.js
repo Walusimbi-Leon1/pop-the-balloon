@@ -322,22 +322,32 @@ function showAnswerCard(state) {
 
 // ── Voting ───────────────────────────────────────────────────────────────────
 function castVote(vote) {
-  if (!firebaseState || firebaseState.phase !== "prompt") return;
+  if (!firebaseState || firebaseState.phase !== "prompt") {
+    console.log("[Vote] SKIP: no firebaseState or not in prompt phase");
+    return;
+  }
 
   const revealIdx = firebaseState.revealIndex;
   const answers = firebaseState.shuffledAnswers || [];
-  if (revealIdx < 0 || revealIdx >= answers.length) return;
+  if (revealIdx < 0 || revealIdx >= answers.length) {
+    console.log("[Vote] SKIP: invalid revealIdx=" + revealIdx);
+    return;
+  }
 
   const answer = answers[revealIdx];
   const isMyAnswer = answer.playerId === playerId;
+  console.log("[Vote] answer.owner=" + answer.playerId + " myId=" + playerId + " isMy=" + isMyAnswer);
   if (isMyAnswer) return;
 
   // Check if already voted
-  if (firebaseState.votedPlayers && firebaseState.votedPlayers[playerId]) return;
+  if (firebaseState.votedPlayers && firebaseState.votedPlayers[playerId]) {
+    console.log("[Vote] SKIP: already voted");
+    return;
+  }
 
-  // Write vote directly to Firebase using the answer's actual player ID
+  // Write vote directly to Firebase
   submitVote(firebaseState.currentPrompt, answer.playerId, playerId, vote);
-  console.log("[Vote] Voted " + vote + " on " + answer.playerId + " (text: " + answer.text.substring(0, 20) + ")");
+  console.log("[Vote] Voted " + vote + " on " + answer.playerId + " (" + answer.text.substring(0, 20) + ")");
 
   if (vote === "pop") {
     els.popBtn.classList.add("voted");
