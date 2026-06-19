@@ -103,6 +103,7 @@ function listenForGameState() {
 
 function handleStateChange(prev, state) {
   const prevPhase = prev ? prev.phase : null;
+  console.log("[Sync] State:", state.phase, "prompt:", state.currentPrompt, "reveal:", state.revealIndex, "answers:", (state.shuffledAnswers||[]).map(a=>a.text.substring(0,10)).join(","));
 
   // Phase transitions
   if (state.phase === "lobby" && prevPhase !== "lobby") {
