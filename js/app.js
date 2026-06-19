@@ -130,21 +130,12 @@ function handleStateChange(prev, state) {
     showResults();
   }
 
-  // Reveal index changed — show next answer card
+  // Reveal index changed — show next answer card and listen for votes
   if (state.phase === "prompt" && state.revealIndex !== undefined && state.revealIndex >= 0) {
     if (!prev || state.revealIndex !== prev.revealIndex || state.currentPrompt !== prev?.currentPrompt) {
       showAnswerCard(state);
-    }
-  }
-
-  // Voting complete for current reveal — host advances
-  if (state.phase === "prompt" && state.revealIndex !== undefined && state.revealIndex >= 0 && isHost()) {
-    const votesForCurrent = state.votedPlayers ? Object.keys(state.votedPlayers).length : 0;
-    const totalVotable = Math.max(0, players.length - 1);
-    console.log("[Host] Votes: " + votesForCurrent + "/" + totalVotable + " advancing:" + state.advancing);
-    if (votesForCurrent >= totalVotable && !state.advancing) {
-      console.log("[Host] All votes in! Advancing...");
-      advanceReveal(state);
+      // Host listens for votes and advances
+      if (isHost()) listenForVotes(state);
     }
   }
 }
@@ -263,6 +254,27 @@ function listenForAnswers(promptIndex) {
   });
 }
 
+// ── Listen for Votes (host only) ─────────────────────────────────────────────
+let votesUnsub = null;
+function listenForVotes(state) {
+  if (votesUnsub) votesUnsub();
+  const revealIdx = state.revealIndex;
+  const answers = state.shuffledAnswers || [];
+  if (revealIdx < 0 || revealIdx >= answers.length) return;
+  
+  const answer = answers[revealIdx];
+  votesUnsub = onVotesUpdate(state.currentPrompt, answer.playerId, (votes) => {
+    const voteCount = Object.keys(votes).length;
+    const totalVotable = Math.max(0, players.length - 1);
+    console.log("[Host] Votes: " + voteCount + "/" + totalVotable);
+    
+    if (voteCount >= totalVotable && !state.advancing) {
+      console.log("[Host] All votes in! Advancing...");
+      advanceReveal(state);
+    }
+  });
+}
+
 // ── Show Answer Card ─────────────────────────────────────────────────────────
 function showAnswerCard(state) {
   const revealIdx = state.revealIndex;
@@ -322,15 +334,8 @@ function castVote(vote) {
   // Check if already voted
   if (firebaseState.votedPlayers && firebaseState.votedPlayers[playerId]) return;
 
-  // Record vote in Firebase
-  const newVotedPlayers = { ...(firebaseState.votedPlayers || {}), [playerId]: vote };
+  // Write vote directly to Firebase (atomic update, no race condition)
   submitVote(firebaseState.currentPrompt, answer.playerId, playerId, vote);
-
-  // Update game state in Firebase (ALL tabs write their vote)
-  setGameState({
-    ...firebaseState,
-    votedPlayers: newVotedPlayers,
-  });
 
   if (vote === "pop") {
     els.popBtn.classList.add("voted");
@@ -345,32 +350,24 @@ function castVote(vote) {
 function advanceReveal(state) {
   if (!isHost()) return;
   
-  // Mark as advancing to prevent duplicate advances
-  const advancingState = { ...state, advancing: true };
-  setGameState(advancingState);
-  
   const nextIdx = (state.revealIndex || 0) + 1;
   const answers = state.shuffledAnswers || [];
 
   if (nextIdx >= answers.length) {
     const nextPrompt = (state.currentPrompt || 0) + 1;
     if (nextPrompt >= gamePrompts.length) {
-      setGameState({ ...advancingState, phase: "results", advancing: false });
+      setGameState({ ...state, phase: "results" });
     } else {
       setGameState({
-        ...advancingState,
+        ...state,
         currentPrompt: nextPrompt,
         revealIndex: -1,
-        votedPlayers: {},
-        advancing: false,
       });
     }
   } else {
     setGameState({
-      ...advancingState,
+      ...state,
       revealIndex: nextIdx,
-      votedPlayers: {},
-      advancing: false,
     });
   }
 }
@@ -405,29 +402,9 @@ function startTimer(seconds) {
 
     if (timeLeft <= 0) {
       clearInterval(timerInterval);
-      // Auto-advance (host advances, others follow via Firebase)
+      // Auto-advance (host only)
       if (isHost() && firebaseState && firebaseState.phase === "prompt") {
-        const nextIdx = (firebaseState.revealIndex || 0) + 1;
-        const answers = firebaseState.shuffledAnswers || [];
-        if (nextIdx >= answers.length) {
-          const nextPrompt = (firebaseState.currentPrompt || 0) + 1;
-          if (nextPrompt >= gamePrompts.length) {
-            setGameState({ ...firebaseState, phase: "results" });
-          } else {
-            setGameState({
-              ...firebaseState,
-              currentPrompt: nextPrompt,
-              revealIndex: -1,
-              votedPlayers: {},
-            });
-          }
-        } else {
-          setGameState({
-            ...firebaseState,
-            revealIndex: nextIdx,
-            votedPlayers: {},
-          });
-        }
+        advanceReveal(firebaseState);
       }
     }
   }, 1000);
