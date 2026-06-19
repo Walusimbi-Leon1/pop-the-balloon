@@ -152,6 +152,9 @@ function showPromptFromState(state) {
   els.answerField.focus();
 
   updatePlayersBar();
+
+  // Listen for answers from ALL tabs (host + non-host)
+  listenForAnswers(promptIndex);
 }
 
 // ── Join Game ────────────────────────────────────────────────────────────────
@@ -233,24 +236,25 @@ function showPrompt(index, prompts) {
   els.answerField.focus();
 
   updatePlayersBar();
-
-  // Listen for all answers to come in
-  listenForAnswers(index);
 }
 
 // ── Listen for Answers (all tabs) ────────────────────────────────────────────
 function listenForAnswers(promptIndex) {
   if (answersUnsub) answersUnsub();
+  console.log("[Game] Listening for answers on prompt " + promptIndex);
   answersUnsub = onAnswersUpdate(promptIndex, (answers) => {
     answersForCurrentPrompt = answers;
     const totalPlayers = players.length;
-    console.log(`[Game] Answers: ${answers.length}/${totalPlayers}`);
+    console.log("[Game] Answers: " + answers.length + "/" + totalPlayers + " (promptIndex: " + currentPromptIndex + ", gamePhase: " + gamePhase + ")");
 
     if (answers.length >= totalPlayers && gamePhase === "game") {
       // All answers in — start reveal (only if we haven't already)
       if (currentAnswerIndex === 0 && !els.answerInput.classList.contains("hidden")) {
+        console.log("[Game] All answers received! Starting reveal...");
         els.answerInput.classList.add("hidden");
         startReveal();
+      } else {
+        console.log("[Game] Answers ready but conditions not met: currentAnswerIndex=" + currentAnswerIndex + " inputHidden=" + els.answerInput.classList.contains("hidden"));
       }
     }
   });
