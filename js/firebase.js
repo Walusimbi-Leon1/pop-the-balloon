@@ -40,6 +40,20 @@ export async function initFirebase(channelId) {
 export function joinRoom(playerId, playerName, playerAvatar, onPlayersUpdate) {
   if (!db || !dbMod) return;
 
+  // Clean up stale players (offline for >5 min)
+  const allRef = dbMod.ref(db, roomPath("players"));
+  dbMod.get(allRef).then((snap) => {
+    const raw = snap.val();
+    if (!raw) return;
+    const now = Date.now();
+    Object.entries(raw).forEach(([key, p]) => {
+      if (!p || key === "undefined" || (p.lastActive && now - p.lastActive > 300000)) {
+        console.log("[Firebase] Cleaning stale player:", key);
+        dbMod.remove(dbMod.ref(db, roomPath("players/" + key)));
+      }
+    });
+  }).catch(() => {});
+
   const data = {
     id: playerId,
     name: playerName,
@@ -52,16 +66,24 @@ export function joinRoom(playerId, playerName, playerAvatar, onPlayersUpdate) {
     score: 0,
   };
 
+  // Use update instead of set to avoid overwriting with undefined
   const pRef = dbMod.ref(db, roomPath("players/" + playerId));
-  dbMod.set(pRef, data);
+  dbMod.update(pRef, data);
 
-  const allRef = dbMod.ref(db, roomPath("players"));
-  const unsub = dbMod.onValue(allRef, (snap) => {
+  const allRef2 = dbMod.ref(db, roomPath("players"));
+  const unsub = dbMod.onValue(allRef2, (snap) => {
     const raw = snap.val();
-    const list = raw ? Object.values(raw).filter(p => p && p.online) : [];
+    const list = raw ? Object.values(raw).filter(p => p && p.online && p.id) : [];
     onPlayersUpdate(list);
   });
   unsubscribers.push(unsub);
+
+  // Heartbeat: update lastActive every 30s
+  const heartbeatInterval = setInterval(() => {
+    if (!db || !dbMod) { clearInterval(heartbeatInterval); return; }
+    dbMod.update(pRef, { lastActive: Date.now() }).catch(() => {});
+  }, 30000);
+  unsubscribers.push(() => clearInterval(heartbeatInterval));
 
   return data;
 }

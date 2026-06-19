@@ -1,5 +1,5 @@
 /**
- * Pop the Balloon — Main Game Logic
+ * Pop the Balloon — Main Game Logic (v2 — multiplayer sync fixed)
  */
 
 import { initDiscord, playerName, playerId, playerAvatar, isDiscord, channelId } from "./discord.js";
@@ -30,6 +30,10 @@ let answersForCurrentPrompt = [];
 let myVote = null;
 let timerInterval = null;
 let timeLeft = 30;
+let gamePrompts = [];
+let gameStateUnsub = null;
+let answersUnsub = null;
+let votesUnsub = null;
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const $ = (sel) => document.querySelector(sel);
@@ -84,6 +88,63 @@ async function startApp() {
   await initFirebase(info.channelId);
 
   els.splashStatus.textContent = "Ready!";
+
+  // Listen for game state changes (for non-host tabs)
+  listenForGameState();
+}
+
+// ── Listen for Game State (syncs non-host tabs) ─────────────────────────────
+function listenForGameState() {
+  if (gameStateUnsub) gameStateUnsub();
+  gameStateUnsub = onGameStateChange((state) => {
+    if (!state) return;
+    console.log("[Game] State changed:", state.phase);
+
+    if (state.phase === "prompt" && gamePhase === "lobby") {
+      // Host started the game — sync to game screen
+      gamePrompts = state.prompts || PROMPTS.slice(0, 5);
+      currentPromptIndex = state.currentPrompt || 0;
+      showScreen("game");
+      showPromptFromState(state);
+    } else if (state.phase === "prompt" && gamePhase === "game") {
+      // New prompt from host
+      currentPromptIndex = state.currentPrompt || 0;
+      currentAnswerIndex = 0;
+      myVote = null;
+      showPromptFromState(state);
+    } else if (state.phase === "results" && gamePhase !== "results") {
+      showResults();
+    } else if (state.phase === "lobby" && gamePhase !== "lobby") {
+      // Game reset — back to lobby
+      clearInterval(timerInterval);
+      showScreen("lobby");
+    }
+  });
+}
+
+function showPromptFromState(state) {
+  const promptIndex = state.currentPrompt || 0;
+  if (promptIndex >= gamePrompts.length) {
+    showResults();
+    return;
+  }
+
+  currentPromptIndex = promptIndex;
+  currentAnswerIndex = 0;
+  myVote = null;
+
+  const prompt = gamePrompts[promptIndex];
+  els.promptText.textContent = prompt;
+  els.roundDisplay.textContent = `${promptIndex + 1}/${gamePrompts.length}`;
+
+  // Show answer input
+  els.answerInput.classList.remove("hidden");
+  els.answerCard.classList.add("hidden");
+  els.answerReactions.classList.add("hidden");
+  els.answerField.value = "";
+  els.answerField.focus();
+
+  updatePlayersBar();
 }
 
 // ── Join Game ────────────────────────────────────────────────────────────────
@@ -112,23 +173,35 @@ function updateLobby() {
   // Show start button if host (first player)
   if (players.length > 0 && players[0].id === playerId) {
     els.startBtn.classList.remove("hidden");
+  } else {
+    els.startBtn.classList.add("hidden");
   }
 }
 
-// ── Start Game ───────────────────────────────────────────────────────────────
+// ── Start Game (host only) ───────────────────────────────────────────────────
 async function startGame() {
-  const promptsForMode = currentMode === "rapid" ? PROMPTS.slice(0, 10) : PROMPTS.slice(0, 5);
+  // Only the first player (host) can start
+  if (!players.length || players[0].id !== playerId) return;
 
+  gamePrompts = currentMode === "rapid" ? PROMPTS.slice(0, 10) : PROMPTS.slice(0, 5);
+
+  // Write initial prompts to Firebase
+  for (let i = 0; i < gamePrompts.length; i++) {
+    setPrompt(i, gamePrompts[i]);
+  }
+
+  // Set game state — this triggers all tabs to transition
   setGameState({
     phase: "prompt",
     currentPrompt: 0,
-    prompts: promptsForMode,
+    prompts: gamePrompts,
     currentAnswer: 0,
     totalAnswers: players.length,
   });
 
+  // Host also transitions locally
   showScreen("game");
-  showPrompt(0, promptsForMode);
+  showPrompt(0, gamePrompts);
 }
 
 function showPrompt(index, prompts) {
@@ -148,15 +221,35 @@ function showPrompt(index, prompts) {
   // Show answer input
   els.answerInput.classList.remove("hidden");
   els.answerCard.classList.add("hidden");
-  els.answerReactions.classList.add("hidden");
+  els.answerReactions.classList.remove("hidden");
   els.answerField.value = "";
   els.answerField.focus();
 
-  // Update players bar
   updatePlayersBar();
+
+  // Listen for all answers to come in
+  listenForAnswers(index);
 }
 
-// ── Submit Answer ────────────────────────────────────────────────────────────
+// ── Listen for Answers (all tabs) ────────────────────────────────────────────
+function listenForAnswers(promptIndex) {
+  if (answersUnsub) answersUnsub();
+  answersUnsub = onAnswersUpdate(promptIndex, (answers) => {
+    answersForCurrentPrompt = answers;
+    const totalPlayers = players.length;
+    console.log(`[Game] Answers: ${answers.length}/${totalPlayers}`);
+
+    if (answers.length >= totalPlayers && gamePhase === "game") {
+      // All answers in — start reveal (only if we haven't already)
+      if (currentAnswerIndex === 0 && !els.answerInput.classList.contains("hidden")) {
+        els.answerInput.classList.add("hidden");
+        startReveal();
+      }
+    }
+  });
+}
+
+// ── Submit Answer (all tabs) ─────────────────────────────────────────────────
 async function submitMyAnswer() {
   const text = els.answerField.value.trim();
   if (!text) return;
@@ -164,17 +257,11 @@ async function submitMyAnswer() {
   submitAnswer(currentPromptIndex, playerId, text);
   els.answerInput.classList.add("hidden");
 
-  // Wait for all answers, then start reveal
-  onAnswersUpdate(currentPromptIndex, (answers) => {
-    answersForCurrentPrompt = answers;
-    if (answers.length >= players.length) {
-      startReveal();
-    }
-  });
+  // The onAnswersUpdate listener will trigger startReveal when all answers are in
 }
 
 function startReveal() {
-  // Shuffle answers
+  // Shuffle answers for anonymous reveal
   answersForCurrentPrompt = shuffleArray([...answersForCurrentPrompt]);
   currentAnswerIndex = 0;
   revealNextAnswer();
@@ -182,8 +269,23 @@ function startReveal() {
 
 function revealNextAnswer() {
   if (currentAnswerIndex >= answersForCurrentPrompt.length) {
-    // All answers revealed, move to next prompt
-    showPrompt(currentPromptIndex + 1, PROMPTS);
+    // All answers revealed — host advances to next prompt
+    if (players.length > 0 && players[0].id === playerId) {
+      const nextIndex = currentPromptIndex + 1;
+      if (nextIndex >= gamePrompts.length) {
+        setGameState({ phase: "results", prompts: gamePrompts, currentPrompt: nextIndex });
+        showResults();
+      } else {
+        setGameState({
+          phase: "prompt",
+          currentPrompt: nextIndex,
+          prompts: gamePrompts,
+          currentAnswer: 0,
+          totalAnswers: players.length,
+        });
+        showPrompt(nextIndex, gamePrompts);
+      }
+    }
     return;
   }
 
@@ -208,7 +310,7 @@ function revealNextAnswer() {
   startTimer(currentMode === "rapid" ? 10 : 30);
 }
 
-// ── Voting ───────────────────────────────────────────────────────────────────
+// ── Voting (all tabs) ────────────────────────────────────────────────────────
 function castVote(vote) {
   if (myVote) return;
   myVote = vote;
@@ -225,7 +327,7 @@ function castVote(vote) {
     els.popBtn.classList.add("voted");
   }
 
-  // Wait a moment then show next answer
+  // Auto-advance after vote
   setTimeout(() => {
     currentAnswerIndex++;
     revealNextAnswer();
@@ -245,7 +347,7 @@ function showPopAnimation(targetPlayerId) {
   if (dot) dot.classList.add("popped");
 }
 
-// ── Timer ────────────────────────────────────────────────────────────────────
+// ── Timer (all tabs sync via host) ───────────────────────────────────────────
 function startTimer(seconds) {
   clearInterval(timerInterval);
   timeLeft = seconds;
@@ -262,9 +364,11 @@ function startTimer(seconds) {
 
     if (timeLeft <= 0) {
       clearInterval(timerInterval);
-      // Auto-advance
-      currentAnswerIndex++;
-      revealNextAnswer();
+      // Auto-advance if no vote cast
+      if (!myVote) {
+        currentAnswerIndex++;
+        revealNextAnswer();
+      }
     }
   }, 1000);
 }
@@ -282,8 +386,9 @@ function updatePlayersBar() {
 
 // ── Results ──────────────────────────────────────────────────────────────────
 function showResults() {
-  showScreen("results");
   clearInterval(timerInterval);
+  if (answersUnsub) { answersUnsub(); answersUnsub = null; }
+  showScreen("results");
 
   const survivors = players.filter(p => !p.popped);
   const popped = players.filter(p => p.popped);
@@ -397,11 +502,21 @@ els.popBtn.addEventListener("click", () => castVote("pop"));
 
 // Play again
 els.playAgainBtn.addEventListener("click", () => {
+  // Host resets game state
+  if (players.length > 0 && players[0].id === playerId) {
+    setGameState({ phase: "lobby" });
+    // Clean up old prompts data
+    for (let i = 0; i < 10; i++) {
+      const ref = window.firebase ? window.firebase : null;
+    }
+  }
+  clearInterval(timerInterval);
+  if (answersUnsub) { answersUnsub(); answersUnsub = null; }
   showScreen("lobby");
   updateLobby();
 });
 
-// Cleanup
+// Cleanup on page unload
 window.addEventListener("beforeunload", () => {
   leaveRoom(playerId);
 });
