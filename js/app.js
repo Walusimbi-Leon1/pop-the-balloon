@@ -315,14 +315,20 @@ function castVote(vote) {
 
   const answer = answers[revealIdx];
   const isMyAnswer = answer.playerId === playerId;
-  if (isMyAnswer) return; // Can't vote on own answer
+  if (isMyAnswer) return;
 
   // Check if already voted
   if (firebaseState.votedPlayers && firebaseState.votedPlayers[playerId]) return;
 
-  // Record vote
+  // Record vote in Firebase
   const newVotedPlayers = { ...(firebaseState.votedPlayers || {}), [playerId]: vote };
   submitVote(firebaseState.currentPrompt, answer.playerId, playerId, vote);
+
+  // Update game state in Firebase (ALL tabs write their vote)
+  setGameState({
+    ...firebaseState,
+    votedPlayers: newVotedPlayers,
+  });
 
   if (vote === "pop") {
     els.popBtn.classList.add("voted");
@@ -332,42 +338,6 @@ function castVote(vote) {
     els.keepBtn.classList.add("voted");
     els.popBtn.classList.add("voted");
   }
-
-  // Update state with vote (host will detect and advance)
-  if (isHost()) {
-    setGameState({
-      ...firebaseState,
-      votedPlayers: newVotedPlayers,
-    });
-  }
-
-  // Auto-advance after delay (fallback if host detection is slow)
-  setTimeout(() => {
-    if (isHost() && firebaseState && firebaseState.phase === "prompt") {
-      const nextIdx = (firebaseState.revealIndex || 0) + 1;
-      const answers = firebaseState.shuffledAnswers || [];
-      if (nextIdx >= answers.length) {
-        // All answers revealed for this prompt
-        const nextPrompt = (firebaseState.currentPrompt || 0) + 1;
-        if (nextPrompt >= gamePrompts.length) {
-          setGameState({ ...firebaseState, phase: "results" });
-        } else {
-          setGameState({
-            ...firebaseState,
-            currentPrompt: nextPrompt,
-            revealIndex: -1,
-            votedPlayers: {},
-          });
-        }
-      } else {
-        setGameState({
-          ...firebaseState,
-          revealIndex: nextIdx,
-          votedPlayers: {},
-        });
-      }
-    }
-  }, 2000);
 }
 
 function advanceReveal(state) {
