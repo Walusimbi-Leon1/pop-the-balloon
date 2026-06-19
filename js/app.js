@@ -43,6 +43,7 @@ const screens = {
   game: $("#gameScreen"),
   results: $("#results"),
 };
+console.log("[Game] Screens map:", Object.keys(screens).map(k => k + ":" + (screens[k] ? "OK" : "NULL")).join(", "));
 const els = {
   splashStatus: $("#splashStatus"),
   playBtn: $("#playBtn"),
@@ -72,9 +73,14 @@ const els = {
 
 // ── Screen Management ────────────────────────────────────────────────────────
 function showScreen(name) {
+  console.log("[Game] showScreen(" + name + ")");
   Object.values(screens).forEach(s => s.classList.remove("active"));
-  screens[name].classList.add("active");
-  gamePhase = name;
+  if (screens[name]) {
+    screens[name].classList.add("active");
+    gamePhase = name;
+  } else {
+    console.log("[Game] ERROR: screen '" + name + "' not found in screens map");
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -98,13 +104,14 @@ function listenForGameState() {
   if (gameStateUnsub) gameStateUnsub();
   gameStateUnsub = onGameStateChange((state) => {
     if (!state) return;
-    console.log("[Game] State changed:", state.phase);
+    console.log("[Game] State changed:", state.phase, "gamePhase:", gamePhase);
 
     if (state.phase === "prompt" && gamePhase === "lobby") {
-      // Host started the game — sync to game screen
+      console.log("[Game] Transitioning to game screen!");
       gamePrompts = state.prompts || PROMPTS.slice(0, 5);
       currentPromptIndex = state.currentPrompt || 0;
       showScreen("game");
+      console.log("[Game] showScreen done, gamePhase:", gamePhase);
       showPromptFromState(state);
     } else if (state.phase === "prompt" && gamePhase === "game") {
       // New prompt from host
