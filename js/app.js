@@ -1,5 +1,5 @@
 /**
- * Pop the Balloon — Main Game Logic (v2 — multiplayer sync fixed)
+ * Pop the Balloon — Main Game Logic (v3 — full Firebase state sync)
  */
 
 import { initDiscord, playerName, playerId, playerAvatar, isDiscord, channelId } from "./discord.js";
@@ -20,20 +20,15 @@ const PROMPTS = [
 ];
 
 // ── State ────────────────────────────────────────────────────────────────────
-let gamePhase = "splash"; // splash | lobby | prompt | voting | results
 let players = [];
 let myData = null;
 let currentMode = "chill";
-let currentPromptIndex = 0;
-let currentAnswerIndex = 0;
-let answersForCurrentPrompt = [];
-let myVote = null;
+let gamePrompts = [];
 let timerInterval = null;
 let timeLeft = 30;
-let gamePrompts = [];
-let gameStateUnsub = null;
-let answersUnsub = null;
-let votesUnsub = null;
+
+// Firebase-synced game state
+let firebaseState = null;
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const $ = (sel) => document.querySelector(sel);
@@ -43,7 +38,6 @@ const screens = {
   game: $("#gameScreen"),
   results: $("#results"),
 };
-console.log("[Game] Screens map:", Object.keys(screens).map(k => k + ":" + (screens[k] ? "OK" : "NULL")).join(", "));
 const els = {
   splashStatus: $("#splashStatus"),
   playBtn: $("#playBtn"),
@@ -73,13 +67,9 @@ const els = {
 
 // ── Screen Management ────────────────────────────────────────────────────────
 function showScreen(name) {
-  console.log("[Game] showScreen(" + name + ")");
   Object.values(screens).forEach(s => s.classList.remove("active"));
   if (screens[name]) {
     screens[name].classList.add("active");
-    gamePhase = name;
-  } else {
-    console.log("[Game] ERROR: screen '" + name + "' not found in screens map");
   }
 }
 
@@ -95,64 +85,85 @@ async function startApp() {
 
   els.splashStatus.textContent = "Ready!";
 
-  // Listen for game state changes (for non-host tabs)
+  // Listen for game state changes (ALL tabs)
   listenForGameState();
 }
 
-// ── Listen for Game State (syncs non-host tabs) ─────────────────────────────
+// ── Listen for Game State (master sync) ──────────────────────────────────────
 function listenForGameState() {
-  if (gameStateUnsub) gameStateUnsub();
-  gameStateUnsub = onGameStateChange((state) => {
+  onGameStateChange((state) => {
     if (!state) return;
-    console.log("[Game] State changed:", state.phase, "gamePhase:", gamePhase);
+    const prev = firebaseState;
+    firebaseState = state;
+    console.log("[Sync] State:", state.phase, "| revealIndex:", state.revealIndex, "| voted:", state.votedPlayers ? Object.keys(state.votedPlayers).length : 0);
 
-    if (state.phase === "prompt" && gamePhase === "lobby") {
-      console.log("[Game] Transitioning to game screen!");
-      gamePrompts = state.prompts || PROMPTS.slice(0, 5);
-      currentPromptIndex = state.currentPrompt || 0;
-      showScreen("game");
-      console.log("[Game] showScreen done, gamePhase:", gamePhase);
-      showPromptFromState(state);
-    } else if (state.phase === "prompt" && gamePhase === "game") {
-      // Already in game, but might need to update prompt display or re-listen
-      console.log("[Game] Already in game, updating prompt display");
-      gamePrompts = state.prompts || gamePrompts;
-      currentPromptIndex = state.currentPrompt || 0;
-      currentAnswerIndex = 0;
-      myVote = null;
-      const prompt = gamePrompts[currentPromptIndex];
-      els.promptText.textContent = prompt || "";
-      els.roundDisplay.textContent = `${currentPromptIndex + 1}/${gamePrompts.length}`;
-      els.answerInput.classList.remove("hidden");
-      els.answerCard.classList.add("hidden");
-      els.answerReactions.classList.add("hidden");
-      updatePlayersBar();
-      listenForAnswers(currentPromptIndex);
-    } else if (state.phase === "results" && gamePhase !== "results") {
-      showResults();
-    } else if (state.phase === "lobby" && gamePhase !== "lobby") {
-      // Game reset — back to lobby
-      clearInterval(timerInterval);
-      showScreen("lobby");
-    }
+    handleStateChange(prev, state);
   });
 }
 
+function handleStateChange(prev, state) {
+  const prevPhase = prev ? prev.phase : null;
+
+  // Phase transitions
+  if (state.phase === "lobby" && prevPhase !== "lobby") {
+    showScreen("lobby");
+    updateLobby();
+  } else if (state.phase === "prompt") {
+    if (prevPhase !== "prompt") {
+      // Entering prompt phase — show game screen
+      gamePrompts = state.prompts || PROMPTS.slice(0, 5);
+      showScreen("game");
+    }
+    // Update prompt display
+    showPromptFromState(state);
+  } else if (state.phase === "results") {
+    if (prevPhase !== "results") {
+      showResults();
+    }
+  }
+
+  // Reveal index changed — show next answer card
+  if (state.phase === "prompt" && state.revealIndex !== undefined) {
+    if (!prev || state.revealIndex !== prev.revealIndex) {
+      showAnswerCard(state);
+    }
+  }
+
+  // Voting complete for current reveal — host advances
+  if (state.phase === "prompt" && state.revealIndex !== undefined && isHost()) {
+    const votesForCurrent = getVotesForReveal(state, state.revealIndex);
+    if (votesForCurrent >= getVotablePlayerCount(state) && !state.advancing) {
+      advanceReveal(state);
+    }
+  }
+}
+
+// ── Host check ───────────────────────────────────────────────────────────────
+function isHost() {
+  return players.length > 0 && players[0].id === playerId;
+}
+
+function getVotablePlayerCount(state) {
+  // Number of players who can vote (everyone except the revealed player)
+  return Math.max(0, players.length - 1);
+}
+
+function getVotesForReveal(state, revealIndex) {
+  if (!state.votedPlayers) return 0;
+  return Object.keys(state.votedPlayers).length;
+}
+
+// ── Show Prompt from State ───────────────────────────────────────────────────
 function showPromptFromState(state) {
-  const promptIndex = state.currentPrompt || 0;
-  console.log("[Game] showPromptFromState: promptIndex=" + promptIndex + " gamePrompts.length=" + gamePrompts.length + " gamePhase=" + gamePhase);
-  if (promptIndex >= gamePrompts.length) {
-    showResults();
+  const idx = state.currentPrompt || 0;
+  if (idx >= gamePrompts.length) {
+    if (isHost()) setGameState({ ...firebaseState, phase: "results" });
     return;
   }
 
-  currentPromptIndex = promptIndex;
-  currentAnswerIndex = 0;
-  myVote = null;
-
-  const prompt = gamePrompts[promptIndex];
+  const prompt = gamePrompts[idx];
   els.promptText.textContent = prompt;
-  els.roundDisplay.textContent = `${promptIndex + 1}/${gamePrompts.length}`;
+  els.roundDisplay.textContent = `${idx + 1}/${gamePrompts.length}`;
 
   // Show answer input
   els.answerInput.classList.remove("hidden");
@@ -163,8 +174,8 @@ function showPromptFromState(state) {
 
   updatePlayersBar();
 
-  // Listen for answers from ALL tabs (host + non-host)
-  listenForAnswers(promptIndex);
+  // Listen for answers
+  listenForAnswers(idx);
 }
 
 // ── Join Game ────────────────────────────────────────────────────────────────
@@ -200,121 +211,75 @@ function updateLobby() {
 
 // ── Start Game (host only) ───────────────────────────────────────────────────
 async function startGame() {
-  // Only the first player (host) can start
-  if (!players.length || players[0].id !== playerId) return;
+  if (!isHost()) return;
 
   gamePrompts = currentMode === "rapid" ? PROMPTS.slice(0, 10) : PROMPTS.slice(0, 5);
 
-  // Write initial prompts to Firebase
+  // Write prompts to Firebase
   for (let i = 0; i < gamePrompts.length; i++) {
     setPrompt(i, gamePrompts[i]);
   }
 
-  // Set game state — this triggers all tabs to transition
+  // Set initial game state
   setGameState({
     phase: "prompt",
     currentPrompt: 0,
     prompts: gamePrompts,
-    currentAnswer: 0,
-    totalAnswers: players.length,
+    revealIndex: -1,
+    votedPlayers: {},
   });
-
-  // Host also transitions locally
-  showScreen("game");
-  showPrompt(0, gamePrompts);
 }
 
-function showPrompt(index, prompts) {
-  if (index >= prompts.length) {
-    showResults();
-    return;
-  }
-
-  currentPromptIndex = index;
-  currentAnswerIndex = 0;
-  myVote = null;
-
-  const prompt = prompts[index];
-  els.promptText.textContent = prompt;
-  els.roundDisplay.textContent = `${index + 1}/${prompts.length}`;
-
-  // Show answer input
-  els.answerInput.classList.remove("hidden");
-  els.answerCard.classList.add("hidden");
-  els.answerReactions.classList.remove("hidden");
-  els.answerField.value = "";
-  els.answerField.focus();
-
-  updatePlayersBar();
-}
-
-// ── Listen for Answers (all tabs) ────────────────────────────────────────────
+// ── Listen for Answers ───────────────────────────────────────────────────────
+let answersUnsub = null;
 function listenForAnswers(promptIndex) {
   if (answersUnsub) answersUnsub();
-  console.log("[Game] Listening for answers on prompt " + promptIndex);
   answersUnsub = onAnswersUpdate(promptIndex, (answers) => {
-    answersForCurrentPrompt = answers;
     const totalPlayers = players.length;
-    console.log("[Game] Answers: " + answers.length + "/" + totalPlayers + " (promptIndex: " + currentPromptIndex + ", gamePhase: " + gamePhase + ")");
+    console.log(`[Answers] ${answers.length}/${totalPlayers} for prompt ${promptIndex}`);
 
-    if (answers.length >= totalPlayers && gamePhase === "game") {
-      // All answers in — start reveal (only if we haven't already)
-      console.log("[Game] Checking reveal: currentAnswerIndex=" + currentAnswerIndex + " inputHidden=" + els.answerInput.classList.contains("hidden") + " answersLen=" + answers.length + " playersLen=" + totalPlayers);
-      if (currentAnswerIndex === 0 && !els.answerInput.classList.contains("hidden")) {
-        console.log("[Game] All answers received! Starting reveal...");
-        els.answerInput.classList.add("hidden");
-        startReveal();
-      } else {
-        console.log("[Game] SKIP: currentAnswerIndex=" + currentAnswerIndex + " inputHidden=" + els.answerInput.classList.contains("hidden"));
-      }
+    // All answers in and host hasn't started reveal yet → start reveal
+    if (answers.length >= totalPlayers && isHost() && firebaseState && firebaseState.revealIndex === -1) {
+      console.log("[Host] All answers in! Starting reveal...");
+      // Shuffle answers for anonymous reveal and store them
+      const shuffled = shuffleArray([...answers]);
+      setGameState({
+        ...firebaseState,
+        revealIndex: 0,
+        shuffledAnswers: shuffled,
+      });
     }
   });
 }
 
-// ── Submit Answer (all tabs) ─────────────────────────────────────────────────
-async function submitMyAnswer() {
-  const text = els.answerField.value.trim();
-  if (!text) return;
+// ── Show Answer Card ─────────────────────────────────────────────────────────
+function showAnswerCard(state) {
+  const revealIdx = state.revealIndex;
+  const answers = state.shuffledAnswers || [];
 
-  submitAnswer(currentPromptIndex, playerId, text);
-  els.answerInput.classList.add("hidden");
-
-  // The onAnswersUpdate listener will trigger startReveal when all answers are in
-}
-
-function startReveal() {
-  // Shuffle answers for anonymous reveal
-  answersForCurrentPrompt = shuffleArray([...answersForCurrentPrompt]);
-  currentAnswerIndex = 0;
-  revealNextAnswer();
-}
-
-function revealNextAnswer() {
-  if (currentAnswerIndex >= answersForCurrentPrompt.length) {
-    // All answers revealed — host advances to next prompt
-    if (players.length > 0 && players[0].id === playerId) {
-      const nextIndex = currentPromptIndex + 1;
-      if (nextIndex >= gamePrompts.length) {
-        setGameState({ phase: "results", prompts: gamePrompts, currentPrompt: nextIndex });
-        showResults();
+  if (revealIdx < 0 || revealIdx >= answers.length) {
+    // All answers revealed — move to next prompt
+    if (isHost()) {
+      const nextPrompt = (state.currentPrompt || 0) + 1;
+      if (nextPrompt >= gamePrompts.length) {
+        setGameState({ ...state, phase: "results" });
       } else {
         setGameState({
-          phase: "prompt",
-          currentPrompt: nextIndex,
-          prompts: gamePrompts,
-          currentAnswer: 0,
-          totalAnswers: players.length,
+          ...state,
+          currentPrompt: nextPrompt,
+          revealIndex: -1,
+          votedPlayers: {},
         });
-        showPrompt(nextIndex, gamePrompts);
       }
     }
     return;
   }
 
-  const answer = answersForCurrentPrompt[currentAnswerIndex];
+  const answer = answers[revealIdx];
   const isMyAnswer = answer.playerId === playerId;
 
-  // Show the answer card
+  // Hide input, show card
+  els.answerInput.classList.add("hidden");
   els.answerCard.classList.remove("hidden");
   els.answerText.textContent = answer.text;
 
@@ -325,20 +290,30 @@ function revealNextAnswer() {
     els.answerReactions.classList.remove("hidden");
     els.keepBtn.classList.remove("voted");
     els.popBtn.classList.remove("voted");
-    myVote = null;
   }
 
-  // Start timer for voting
+  // Start timer
   startTimer(currentMode === "rapid" ? 10 : 30);
 }
 
-// ── Voting (all tabs) ────────────────────────────────────────────────────────
+// ── Voting ───────────────────────────────────────────────────────────────────
 function castVote(vote) {
-  if (myVote) return;
-  myVote = vote;
+  if (!firebaseState || firebaseState.phase !== "prompt") return;
 
-  const answer = answersForCurrentPrompt[currentAnswerIndex];
-  submitVote(currentPromptIndex, answer.playerId, playerId, vote);
+  const revealIdx = firebaseState.revealIndex;
+  const answers = firebaseState.shuffledAnswers || [];
+  if (revealIdx < 0 || revealIdx >= answers.length) return;
+
+  const answer = answers[revealIdx];
+  const isMyAnswer = answer.playerId === playerId;
+  if (isMyAnswer) return; // Can't vote on own answer
+
+  // Check if already voted
+  if (firebaseState.votedPlayers && firebaseState.votedPlayers[playerId]) return;
+
+  // Record vote
+  const newVotedPlayers = { ...(firebaseState.votedPlayers || {}), [playerId]: vote };
+  submitVote(firebaseState.currentPrompt, answer.playerId, playerId, vote);
 
   if (vote === "pop") {
     els.popBtn.classList.add("voted");
@@ -349,11 +324,69 @@ function castVote(vote) {
     els.popBtn.classList.add("voted");
   }
 
-  // Auto-advance after vote
+  // Update state with vote (host will detect and advance)
+  if (isHost()) {
+    setGameState({
+      ...firebaseState,
+      votedPlayers: newVotedPlayers,
+    });
+  }
+
+  // Auto-advance after delay (fallback if host detection is slow)
   setTimeout(() => {
-    currentAnswerIndex++;
-    revealNextAnswer();
-  }, 1500);
+    if (isHost() && firebaseState && firebaseState.phase === "prompt") {
+      const nextIdx = (firebaseState.revealIndex || 0) + 1;
+      const answers = firebaseState.shuffledAnswers || [];
+      if (nextIdx >= answers.length) {
+        // All answers revealed for this prompt
+        const nextPrompt = (firebaseState.currentPrompt || 0) + 1;
+        if (nextPrompt >= gamePrompts.length) {
+          setGameState({ ...firebaseState, phase: "results" });
+        } else {
+          setGameState({
+            ...firebaseState,
+            currentPrompt: nextPrompt,
+            revealIndex: -1,
+            votedPlayers: {},
+          });
+        }
+      } else {
+        setGameState({
+          ...firebaseState,
+          revealIndex: nextIdx,
+          votedPlayers: {},
+        });
+      }
+    }
+  }, 2000);
+}
+
+function advanceReveal(state) {
+  const nextIdx = (state.revealIndex || 0) + 1;
+  const answers = state.shuffledAnswers || [];
+
+  if (nextIdx >= answers.length) {
+    // All answers revealed for this prompt
+    const nextPrompt = (state.currentPrompt || 0) + 1;
+    if (nextPrompt >= gamePrompts.length) {
+      setGameState({ ...state, phase: "results", advancing: false });
+    } else {
+      setGameState({
+        ...state,
+        currentPrompt: nextPrompt,
+        revealIndex: -1,
+        votedPlayers: {},
+        advancing: false,
+      });
+    }
+  } else {
+    setGameState({
+      ...state,
+      revealIndex: nextIdx,
+      votedPlayers: {},
+      advancing: false,
+    });
+  }
 }
 
 function showPopAnimation(targetPlayerId) {
@@ -369,7 +402,7 @@ function showPopAnimation(targetPlayerId) {
   if (dot) dot.classList.add("popped");
 }
 
-// ── Timer (all tabs sync via host) ───────────────────────────────────────────
+// ── Timer ────────────────────────────────────────────────────────────────────
 function startTimer(seconds) {
   clearInterval(timerInterval);
   timeLeft = seconds;
@@ -386,10 +419,29 @@ function startTimer(seconds) {
 
     if (timeLeft <= 0) {
       clearInterval(timerInterval);
-      // Auto-advance if no vote cast
-      if (!myVote) {
-        currentAnswerIndex++;
-        revealNextAnswer();
+      // Auto-advance (host advances, others follow via Firebase)
+      if (isHost() && firebaseState && firebaseState.phase === "prompt") {
+        const nextIdx = (firebaseState.revealIndex || 0) + 1;
+        const answers = firebaseState.shuffledAnswers || [];
+        if (nextIdx >= answers.length) {
+          const nextPrompt = (firebaseState.currentPrompt || 0) + 1;
+          if (nextPrompt >= gamePrompts.length) {
+            setGameState({ ...firebaseState, phase: "results" });
+          } else {
+            setGameState({
+              ...firebaseState,
+              currentPrompt: nextPrompt,
+              revealIndex: -1,
+              votedPlayers: {},
+            });
+          }
+        } else {
+          setGameState({
+            ...firebaseState,
+            revealIndex: nextIdx,
+            votedPlayers: {},
+          });
+        }
       }
     }
   }, 1000);
@@ -518,19 +570,22 @@ els.answerField.addEventListener("keydown", (e) => {
   if (e.key === "Enter") submitMyAnswer();
 });
 
+async function submitMyAnswer() {
+  const text = els.answerField.value.trim();
+  if (!text) return;
+
+  submitAnswer(firebaseState.currentPrompt, playerId, text);
+  els.answerInput.classList.add("hidden");
+}
+
 // Voting
 els.keepBtn.addEventListener("click", () => castVote("keep"));
 els.popBtn.addEventListener("click", () => castVote("pop"));
 
 // Play again
 els.playAgainBtn.addEventListener("click", () => {
-  // Host resets game state
-  if (players.length > 0 && players[0].id === playerId) {
+  if (isHost()) {
     setGameState({ phase: "lobby" });
-    // Clean up old prompts data
-    for (let i = 0; i < 10; i++) {
-      const ref = window.firebase ? window.firebase : null;
-    }
   }
   clearInterval(timerInterval);
   if (answersUnsub) { answersUnsub(); answersUnsub = null; }
@@ -538,7 +593,7 @@ els.playAgainBtn.addEventListener("click", () => {
   updateLobby();
 });
 
-// Cleanup on page unload
+// Cleanup
 window.addEventListener("beforeunload", () => {
   leaveRoom(playerId);
 });

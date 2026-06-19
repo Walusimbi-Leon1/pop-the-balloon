@@ -122,7 +122,12 @@ export function onAnswersUpdate(promptId, callback) {
   const ref = dbMod.ref(db, roomPath("prompts/" + promptId + "/answers"));
   const unsub = dbMod.onValue(ref, (snap) => {
     const raw = snap.val();
-    callback(raw ? Object.values(raw) : []);
+    const answers = raw ? Object.entries(raw).map(([playerId, data]) => ({
+      playerId,
+      text: data.text || "",
+      revealed: data.revealed || false,
+    })) : [];
+    callback(answers);
   });
   unsubscribers.push(unsub);
 }
