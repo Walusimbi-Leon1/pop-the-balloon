@@ -131,6 +131,7 @@ function listenForGameState() {
 
 function showPromptFromState(state) {
   const promptIndex = state.currentPrompt || 0;
+  console.log("[Game] showPromptFromState: promptIndex=" + promptIndex + " gamePrompts.length=" + gamePrompts.length + " gamePhase=" + gamePhase);
   if (promptIndex >= gamePrompts.length) {
     showResults();
     return;
@@ -249,12 +250,13 @@ function listenForAnswers(promptIndex) {
 
     if (answers.length >= totalPlayers && gamePhase === "game") {
       // All answers in — start reveal (only if we haven't already)
+      console.log("[Game] Checking reveal: currentAnswerIndex=" + currentAnswerIndex + " inputHidden=" + els.answerInput.classList.contains("hidden") + " answersLen=" + answers.length + " playersLen=" + totalPlayers);
       if (currentAnswerIndex === 0 && !els.answerInput.classList.contains("hidden")) {
         console.log("[Game] All answers received! Starting reveal...");
         els.answerInput.classList.add("hidden");
         startReveal();
       } else {
-        console.log("[Game] Answers ready but conditions not met: currentAnswerIndex=" + currentAnswerIndex + " inputHidden=" + els.answerInput.classList.contains("hidden"));
+        console.log("[Game] SKIP: currentAnswerIndex=" + currentAnswerIndex + " inputHidden=" + els.answerInput.classList.contains("hidden"));
       }
     }
   });
